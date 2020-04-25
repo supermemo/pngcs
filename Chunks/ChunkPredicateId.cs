@@ -13,7 +13,7 @@ namespace Hjg.Pngcs.Chunks {
             this.id = id;
         }
         public bool Matches(PngChunk c) {
-            return c.Id.Equals(id);
+            return c.Id.Equals(id, StringComparison.InvariantCultureIgnoreCase);
         }
     }
 }

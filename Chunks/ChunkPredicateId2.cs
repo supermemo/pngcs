@@ -23,11 +23,11 @@ namespace Hjg.Pngcs.Chunks
         }
         public bool Matches(PngChunk c)
         {
-            if (!c.Id.Equals(id))
+            if (!c.Id.Equals(id, StringComparison.InvariantCultureIgnoreCase))
                 return false;
-            if (c is PngChunkTextVar && !((PngChunkTextVar)c).GetKey().Equals(innerid))
+            if (c is PngChunkTextVar && !((PngChunkTextVar)c).GetKey().Equals(innerid, StringComparison.InvariantCultureIgnoreCase))
                 return false;
-            if (c is PngChunkSPLT && !((PngChunkSPLT)c).PalName.Equals(innerid))
+            if (c is PngChunkSPLT && !((PngChunkSPLT)c).PalName.Equals(innerid, StringComparison.InvariantCultureIgnoreCase))
                 return false;
 
             return true;

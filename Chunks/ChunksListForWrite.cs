@@ -106,7 +106,7 @@ namespace Hjg.Pngcs.Chunks {
          **/
         private static bool shouldWrite(PngChunk c, int currentGroup) {
             if (currentGroup == CHUNK_GROUP_2_PLTE)
-                return c.Id.Equals(ChunkHelper.PLTE);
+                return c.Id.Equals(ChunkHelper.PLTE, StringComparison.InvariantCultureIgnoreCase);
             if (currentGroup % 2 == 0)
                 throw new PngjOutputException("bad chunk group?");
             int minChunkGroup, maxChunkGroup;
@@ -139,7 +139,7 @@ namespace Hjg.Pngcs.Chunks {
                 PngChunk c = queuedChunks[i];
                 if (!shouldWrite(c, currentGroup))
                     continue;
-                if (ChunkHelper.IsCritical(c.Id) && !c.Id.Equals(ChunkHelper.PLTE))
+                if (ChunkHelper.IsCritical(c.Id) && !c.Id.Equals(ChunkHelper.PLTE, StringComparison.InvariantCultureIgnoreCase))
                     throw new PngjOutputException("bad chunk queued: " + c);
                 if (alreadyWrittenKeys.ContainsKey(c.Id) && !c.AllowsMultiple())
                     throw new PngjOutputException("duplicated chunk does not allow multiple: " + c);

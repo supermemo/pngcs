@@ -1,98 +1,93 @@
+#region License & Metadata
+// The MIT License (MIT)
+// 
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the "Software"),
+// to deal in the Software without restriction, including without limitation
+// the rights to use, copy, modify, merge, publish, distribute, sublicense,
+// and/or sell copies of the Software, and to permit persons to whom the
+// Software is furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+// DEALINGS IN THE SOFTWARE.
+// 
+// 
+// Created On:   2020/03/29 00:21
+// Modified On:  2020/04/06 18:25
+// Modified By:  Alexis
+#endregion
+
 namespace Hjg.Pngcs {
+  using System;
+  using System.Collections.Generic;
+  using System.IO;
+  using Chunks;
+  using Zlib;
 
-    using System;
-    using System.Collections;
-    using System.Collections.Generic;
-    using System.ComponentModel;
-    using System.IO;
-
-    using System.Runtime.CompilerServices;
-    using Chunks;
-    using Hjg.Pngcs.Zlib;
-
-    /// <summary>
+  /// <summary>
     ///  Writes a PNG image, line by line.
     /// </summary>
     public class PngWriter {
-        /// <summary>
-        /// Basic image info, inmutable
-        /// </summary>
-        public readonly ImageInfo ImgInfo;
+      #region Properties & Fields - Non-Public
 
-        /// <summary>
-        /// filename, or description - merely informative, can be empty
-        /// </summary>
-        protected readonly String filename;
-
-        private FilterWriteStrategy filterStrat;
-
-        /**
-         * Deflate algortithm compression strategy
-         */
-        public EDeflateCompressStrategy CompressionStrategy { get; set; }
-
-        /// <summary>
-        /// zip compression level (0 - 9)
-        /// </summary>
-        /// <remarks>
-        /// default:6
-        /// 
-        /// 9 is the maximum compression
-        /// </remarks>
-        public int CompLevel { get; set; }
-        /// <summary>
-        /// true: closes stream after ending write
-        /// </summary>
-        public bool ShouldCloseStream { get; set; }
-        /// <summary>
-        /// Maximum size of IDAT chunks
-        /// </summary>
-        /// <remarks>
-        /// 0=use default (PngIDatChunkOutputStream 32768)
-        /// </remarks>
-        public int IdatMaxSize { get; set; } // 
-
-        /// <summary>
-        /// A high level wrapper of a ChunksList : list of written/queued chunks
-        /// </summary>
-        private readonly PngMetadata metadata;
-        /// <summary>
+      /// <summary>
         /// written/queued chunks
         /// </summary>
         private readonly ChunksListForWrite chunksList;
 
-        /// <summary>
+      /// <summary>
+        /// filename, or description - merely informative, can be empty
+        /// </summary>
+        protected readonly String filename;
+
+      /// <summary>
+        /// A high level wrapper of a ChunksList : list of written/queued chunks
+        /// </summary>
+        private readonly PngMetadata metadata;
+      private readonly Stream outputStream;
+
+      private PngIDatChunkOutputStream datStream;
+      private AZlibOutputStream datStreamDeflated;
+
+      private FilterWriteStrategy filterStrat;
+
+      private readonly int[] histox = new int[256]; // auxiliar buffer, histogram, only used by reportResultsForFilter
+      private bool needsPack; // autocomputed
+
+      /// <summary>
         /// raw current row, as array of bytes,counting from 1 (index 0 is reserved for filter type)
         /// </summary>
         protected byte[] rowb;
-        /// <summary>
-        /// previuos raw row
-        /// </summary>
-        protected byte[] rowbprev; // rowb previous
-        /// <summary>
+      /// <summary>
         /// raw current row, after filtered
         /// </summary>
         protected byte[] rowbfilter;
-
-        /// <summary>
-        /// number of chunk group (0-6) last writen, or currently writing
+      /// <summary>
+        /// previuos raw row
         /// </summary>
-        /// <remarks>see ChunksList.CHUNK_GROUP_NNN</remarks>
-        public int CurrentChunkGroup { get; private set; }
+        protected byte[] rowbprev; // rowb previous
 
-        private int rowNum = -1; // current line number
-        private readonly Stream outputStream;
+      private int rowNum = -1; // current line number
 
-        private PngIDatChunkOutputStream datStream;
-        private AZlibOutputStream datStreamDeflated;
+      // this only influences the 1-2-4 bitdepth format - and if we pass a ImageLine to writeRow, this is ignored
+      private bool unpackedMode;
 
-        private int[] histox = new int[256]; // auxiliar buffer, histogram, only used by reportResultsForFilter
+      #endregion
 
-        // this only influences the 1-2-4 bitdepth format - and if we pass a ImageLine to writeRow, this is ignored
-        private bool unpackedMode;
-        private bool needsPack; // autocomputed
 
-        /// <summary>
+
+
+      #region Constructors
+
+      /// <summary>
         /// Constructs a PngWriter from a outputStream, with no filename information
         /// </summary>
         /// <param name="outputStream"></param>
@@ -101,7 +96,7 @@ namespace Hjg.Pngcs {
             : this(outputStream, imgInfo, "[NO FILENAME AVAILABLE]") {
         }
 
-        /// <summary>
+      /// <summary>
         /// Constructs a PngWriter from a outputStream, with optional filename or description
         /// </summary>
         /// <remarks>
@@ -115,14 +110,14 @@ namespace Hjg.Pngcs {
         /// <param name="filename">Optional, can be the filename or a description.</param>
         public PngWriter(Stream outputStream, ImageInfo imgInfo,
                 String filename) {
-            this.filename = (filename == null) ? "" : filename;
+            this.filename = filename == null ? "" : filename;
             this.outputStream = outputStream;
-            this.ImgInfo = imgInfo;
+            ImgInfo = imgInfo;
             // defaults settings
-            this.CompLevel = 6;
-            this.ShouldCloseStream = true;
-            this.IdatMaxSize = 0; // use default
-            this.CompressionStrategy = EDeflateCompressStrategy.Filtered;
+            CompLevel = 6;
+            ShouldCloseStream = true;
+            IdatMaxSize = 0; // use default
+            CompressionStrategy = EDeflateCompressStrategy.Filtered;
             // prealloc
             //scanline = new int[imgInfo.SamplesPerRowPacked];
             rowb = new byte[imgInfo.BytesPerRow + 1];
@@ -135,17 +130,68 @@ namespace Hjg.Pngcs {
             needsPack = unpackedMode && imgInfo.Packed;
         }
 
-        /// <summary>
+      #endregion
+
+
+
+
+      #region Properties & Fields - Public
+
+      /// <summary>
+        /// Basic image info, inmutable
+        /// </summary>
+        public readonly ImageInfo ImgInfo;
+
+      /**
+         * Deflate algortithm compression strategy
+         */
+        public EDeflateCompressStrategy CompressionStrategy { get; set; }
+
+      /// <summary>
+        /// zip compression level (0 - 9)
+        /// </summary>
+        /// <remarks>
+        /// default:6
+        /// 
+        /// 9 is the maximum compression
+        /// </remarks>
+        public int CompLevel { get; set; }
+      /// <summary>
+        /// true: closes stream after ending write
+        /// </summary>
+        public bool ShouldCloseStream { get; set; }
+      /// <summary>
+        /// Maximum size of IDAT chunks
+        /// </summary>
+        /// <remarks>
+        /// 0=use default (PngIDatChunkOutputStream 32768)
+        /// </remarks>
+        public int IdatMaxSize { get; set; } // 
+
+      /// <summary>
+        /// number of chunk group (0-6) last writen, or currently writing
+        /// </summary>
+        /// <remarks>see ChunksList.CHUNK_GROUP_NNN</remarks>
+        public int CurrentChunkGroup { get; private set; }
+
+      #endregion
+
+
+
+
+      #region Methods
+
+      /// <summary>
         /// init: is called automatically before writing the first row
         /// </summary>
         private void init() {
-            datStream = new PngIDatChunkOutputStream(this.outputStream, this.IdatMaxSize);
-            datStreamDeflated = ZlibStreamFactory.createZlibOutputStream(datStream, this.CompLevel, this.CompressionStrategy, true);
+            datStream = new PngIDatChunkOutputStream(outputStream, IdatMaxSize);
+            datStreamDeflated = ZlibStreamFactory.createZlibOutputStream(datStream, CompLevel, CompressionStrategy, true);
             WriteSignatureAndIHDR();
             WriteFirstChunks();
         }
 
-        private void reportResultsForFilter(int rown, FilterType type, bool tentative) {
+      private void reportResultsForFilter(int rown, FilterType type, bool tentative) {
             for (int i = 0; i < histox.Length; i++)
                 histox[i] = 0;
             int s = 0, v;
@@ -160,12 +206,12 @@ namespace Hjg.Pngcs {
             filterStrat.fillResultsForFilter(rown, type, s, histox, tentative);
         }
 
-        private void WriteEndChunk() {
+      private void WriteEndChunk() {
             PngChunkIEND c = new PngChunkIEND(ImgInfo);
             c.CreateRawChunk().WriteChunk(outputStream);
         }
 
-        private void WriteFirstChunks() {
+      private void WriteFirstChunks() {
             int nw = 0;
             CurrentChunkGroup = ChunksList.CHUNK_GROUP_1_AFTERIDHR;
             nw = chunksList.writeChunks(outputStream, CurrentChunkGroup);
@@ -180,7 +226,7 @@ namespace Hjg.Pngcs {
             CurrentChunkGroup = ChunksList.CHUNK_GROUP_4_IDAT;
         }
 
-        private void WriteLastChunks() { // not including end
+      private void WriteLastChunks() { // not including end
             CurrentChunkGroup = ChunksList.CHUNK_GROUP_5_AFTERIDAT;
             chunksList.writeChunks(outputStream, CurrentChunkGroup);
             // should not be unwriten chunks
@@ -191,14 +237,13 @@ namespace Hjg.Pngcs {
         }
 
 
-
-        /// <summary>
+      /// <summary>
         /// Write id signature and also "IHDR" chunk
         /// </summary>
         ///
         private void WriteSignatureAndIHDR() {
             CurrentChunkGroup = ChunksList.CHUNK_GROUP_0_IDHR;
-            PngHelperInternal.WriteBytes(outputStream, Hjg.Pngcs.PngHelperInternal.PNG_ID_SIGNATURE); // signature
+            PngHelperInternal.WriteBytes(outputStream, PngHelperInternal.PNG_ID_SIGNATURE); // signature
             PngChunkIHDR ihdr = new PngChunkIHDR(ImgInfo);
             // http://www.libpng.org/pub/png/spec/1.2/PNG-Chunks.html
             ihdr.Cols = ImgInfo.Cols;
@@ -218,73 +263,65 @@ namespace Hjg.Pngcs {
             ihdr.CreateRawChunk().WriteChunk(outputStream);
         }
 
-        protected void encodeRowFromByte(byte[] row) {
+      protected void encodeRowFromByte(byte[] row) {
             if (row.Length == ImgInfo.SamplesPerRowPacked && !needsPack) {
                 // some duplication of code - because this case is typical and it works faster this way
                 int j = 1;
-                if (ImgInfo.BitDepth <= 8) {
-                    foreach (byte x in row) { // optimized
-                        rowb[j++] = x;
-                    }
-                } else { // 16 bitspc
-                    foreach (byte x in row) { // optimized
-                        rowb[j] = x;
-                        j += 2;
-                    }
-                }
+                if (ImgInfo.BitDepth <= 8)
+                  foreach (byte x in row) // optimized
+                    rowb[j++] = x;
+                else // 16 bitspc
+                  foreach (byte x in row) { // optimized
+                    rowb[j] =  x;
+                    j       += 2;
+                  }
             } else {
                 // perhaps we need to pack?
                 if (row.Length >= ImgInfo.SamplesPerRow && needsPack)
                     ImageLine.packInplaceByte(ImgInfo, row, row, false); // row is packed in place!
-                if (ImgInfo.BitDepth <= 8) {
-                    for (int i = 0, j = 1; i < ImgInfo.SamplesPerRowPacked; i++) {
-                        rowb[j++] = row[i];
-                    }
-                } else { // 16 bitspc
-                    for (int i = 0, j = 1; i < ImgInfo.SamplesPerRowPacked; i++) {
-                        rowb[j++] = row[i];
-                        rowb[j++] = 0;
-                    }
-                }
+                if (ImgInfo.BitDepth <= 8)
+                  for (int i = 0, j = 1; i < ImgInfo.SamplesPerRowPacked; i++)
+                    rowb[j++] = row[i];
+                else // 16 bitspc
+                  for (int i = 0, j = 1; i < ImgInfo.SamplesPerRowPacked; i++) {
+                    rowb[j++] = row[i];
+                    rowb[j++] = 0;
+                  }
 
             }
         }
 
 
-        protected void encodeRowFromInt(int[] row) {
+      protected void encodeRowFromInt(int[] row) {
             if (row.Length == ImgInfo.SamplesPerRowPacked && !needsPack) {
                 // some duplication of code - because this case is typical and it works faster this way
                 int j = 1;
-                if (ImgInfo.BitDepth <= 8) {
-                    foreach (int x in row) { // optimized
-                        rowb[j++] = (byte)x;
-                    }
-                } else { // 16 bitspc
-                    foreach (int x in row) { // optimized
-                        rowb[j++] = (byte)(x >> 8);
-                        rowb[j++] = (byte)(x); 
-                    }
-                }
+                if (ImgInfo.BitDepth <= 8)
+                  foreach (int x in row) // optimized
+                    rowb[j++] = (byte)x;
+                else // 16 bitspc
+                  foreach (int x in row) { // optimized
+                    rowb[j++] = (byte)(x >> 8);
+                    rowb[j++] = (byte)x; 
+                  }
             } else {
                 // perhaps we need to pack?
                 if (row.Length >= ImgInfo.SamplesPerRow && needsPack)
                     ImageLine.packInplaceInt(ImgInfo, row, row, false); // row is packed in place!
-                if (ImgInfo.BitDepth <= 8) {
-                    for (int i = 0, j = 1; i < ImgInfo.SamplesPerRowPacked; i++) {
-                        rowb[j++] = (byte)(row[i]);
-                    }
-                } else { // 16 bitspc
-                    for (int i = 0, j = 1; i < ImgInfo.SamplesPerRowPacked; i++) {
-                        rowb[j++] = (byte)(row[i] >> 8);
-                        rowb[j++] = (byte)(row[i]);
-                    }
-                }
+                if (ImgInfo.BitDepth <= 8)
+                  for (int i = 0, j = 1; i < ImgInfo.SamplesPerRowPacked; i++)
+                    rowb[j++] = (byte)row[i];
+                else // 16 bitspc
+                  for (int i = 0, j = 1; i < ImgInfo.SamplesPerRowPacked; i++) {
+                    rowb[j++] = (byte)(row[i] >> 8);
+                    rowb[j++] = (byte)row[i];
+                  }
 
             }
         }
 
 
-        private void FilterRow(int rown) {
+      private void FilterRow(int rown) {
             // warning: filters operation rely on: "previos row" (rowbprev) is
             // initialized to 0 the first time
             if (filterStrat.shouldTestAll(rown)) {
@@ -302,19 +339,19 @@ namespace Hjg.Pngcs {
             FilterType filterType = filterStrat.gimmeFilterType(rown, true);
             rowbfilter[0] = (byte)(int)filterType;
             switch (filterType) {
-                case Hjg.Pngcs.FilterType.FILTER_NONE:
+                case FilterType.FILTER_NONE:
                     FilterRowNone();
                     break;
-                case Hjg.Pngcs.FilterType.FILTER_SUB:
+                case FilterType.FILTER_SUB:
                     FilterRowSub();
                     break;
-                case Hjg.Pngcs.FilterType.FILTER_UP:
+                case FilterType.FILTER_UP:
                     FilterRowUp();
                     break;
-                case Hjg.Pngcs.FilterType.FILTER_AVERAGE:
+                case FilterType.FILTER_AVERAGE:
                     FilterRowAverage();
                     break;
-                case Hjg.Pngcs.FilterType.FILTER_PAETH:
+                case FilterType.FILTER_PAETH:
                     FilterRowPaeth();
                     break;
                 default:
@@ -323,7 +360,7 @@ namespace Hjg.Pngcs {
             reportResultsForFilter(rown, filterType, false);
         }
 
-        private void prepareEncodeRow(int rown) {
+      private void prepareEncodeRow(int rown) {
             if (datStream == null)
                 init();
             rowNum++;
@@ -336,53 +373,47 @@ namespace Hjg.Pngcs {
             rowbprev = tmp;
         }
 
-        private void filterAndSend(int rown) {
+      private void filterAndSend(int rown) {
             FilterRow(rown);
             datStreamDeflated.Write(rowbfilter, 0, ImgInfo.BytesPerRow + 1);
         }
 
-        private void FilterRowAverage() {
+      private void FilterRowAverage() {
             int i, j, imax;
             imax = ImgInfo.BytesPerRow;
-            for (j = 1 - ImgInfo.BytesPixel, i = 1; i <= imax; i++, j++) {
-                rowbfilter[i] = (byte)(rowb[i] - ((rowbprev[i]) + (j > 0 ? rowb[j] : 0)) / 2);
-            }
-        }
+            for (j = 1 - ImgInfo.BytesPixel, i = 1; i <= imax; i++, j++)
+              rowbfilter[i] = (byte)(rowb[i] - (rowbprev[i] + (j > 0 ? rowb[j] : 0)) / 2);
+      }
 
-        private void FilterRowNone() {
-            for (int i = 1; i <= ImgInfo.BytesPerRow; i++) {
-                rowbfilter[i] = (byte)rowb[i];
-            }
-        }
+      private void FilterRowNone() {
+            for (int i = 1; i <= ImgInfo.BytesPerRow; i++)
+              rowbfilter[i] = (byte)rowb[i];
+      }
 
 
-        private void FilterRowPaeth() {
+      private void FilterRowPaeth() {
             int i, j, imax;
             imax = ImgInfo.BytesPerRow;
-            for (j = 1 - ImgInfo.BytesPixel, i = 1; i <= imax; i++, j++) {
-                rowbfilter[i] = (byte)(rowb[i] - PngHelperInternal.FilterPaethPredictor(j > 0 ? rowb[j] : 0,
-                        rowbprev[i], j > 0 ? rowbprev[j] : 0));
-            }
-        }
+            for (j = 1 - ImgInfo.BytesPixel, i = 1; i <= imax; i++, j++)
+              rowbfilter[i] = (byte)(rowb[i] - PngHelperInternal.FilterPaethPredictor(j > 0 ? rowb[j] : 0,
+                                                                                      rowbprev[i], j > 0 ? rowbprev[j] : 0));
+      }
 
-        private void FilterRowSub() {
+      private void FilterRowSub() {
             int i, j;
-            for (i = 1; i <= ImgInfo.BytesPixel; i++) {
-                rowbfilter[i] = (byte)rowb[i];
-            }
-            for (j = 1, i = ImgInfo.BytesPixel + 1; i <= ImgInfo.BytesPerRow; i++, j++) {
-                rowbfilter[i] = (byte)(rowb[i] - rowb[j]);
-            }
-        }
+            for (i = 1; i <= ImgInfo.BytesPixel; i++)
+              rowbfilter[i] = (byte)rowb[i];
+            for (j = 1, i = ImgInfo.BytesPixel + 1; i <= ImgInfo.BytesPerRow; i++, j++)
+              rowbfilter[i] = (byte)(rowb[i] - rowb[j]);
+      }
 
-        private void FilterRowUp() {
-            for (int i = 1; i <= ImgInfo.BytesPerRow; i++) {
-                rowbfilter[i] = (byte)(rowb[i] - rowbprev[i]);
-            }
-        }
+      private void FilterRowUp() {
+            for (int i = 1; i <= ImgInfo.BytesPerRow; i++)
+              rowbfilter[i] = (byte)(rowb[i] - rowbprev[i]);
+      }
 
 
-        private long SumRowbfilter() { // sums absolute value 
+      private long SumRowbfilter() { // sums absolute value 
             long s = 0;
             for (int i = 1; i <= ImgInfo.BytesPerRow; i++)
                 if (rowbfilter[i] < 0)
@@ -392,7 +423,7 @@ namespace Hjg.Pngcs {
             return s;
         }
 
-        /// <summary>
+      /// <summary>
         /// copy chunks from reader - copy_mask : see ChunksToWrite.COPY_XXX
         /// If we are after idat, only considers those chunks after IDAT in PngReader
         /// TODO: this should be more customizable
@@ -407,49 +438,47 @@ namespace Hjg.Pngcs {
                     continue;
                 bool copy = false;
                 if (chunk.Crit) {
-                    if (chunk.Id.Equals(ChunkHelper.PLTE)) {
+                    if (chunk.Id.Equals(ChunkHelper.PLTE, StringComparison.InvariantCultureIgnoreCase)) {
                         if (ImgInfo.Indexed && ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_PALETTE))
                             copy = true;
                         if (!ImgInfo.Greyscale && ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_ALL))
                             copy = true;
                     }
                 } else { // ancillary
-                    bool text = (chunk is PngChunkTextVar);
+                    bool text = chunk is PngChunkTextVar;
                     bool safe = chunk.Safe;
                     // notice that these if are not exclusive
                     if (ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_ALL))
                         copy = true;
                     if (safe && ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_ALL_SAFE))
                         copy = true;
-                    if (chunk.Id.Equals(ChunkHelper.tRNS)
+                    if (chunk.Id.Equals(ChunkHelper.tRNS, StringComparison.InvariantCultureIgnoreCase)
                             && ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_TRANSPARENCY))
                         copy = true;
-                    if (chunk.Id.Equals(ChunkHelper.pHYs) && ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_PHYS))
+                    if (chunk.Id.Equals(ChunkHelper.pHYs, StringComparison.InvariantCultureIgnoreCase) && ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_PHYS))
                         copy = true;
                     if (text && ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_TEXTUAL))
                         copy = true;
                     if (ChunkHelper.maskMatch(copy_mask, ChunkCopyBehaviour.COPY_ALMOSTALL)
-                            && !(ChunkHelper.IsUnknown(chunk) || text || chunk.Id.Equals(ChunkHelper.hIST) || chunk.Id
-                                    .Equals(ChunkHelper.tIME)))
+                            && !(ChunkHelper.IsUnknown(chunk) || text || chunk.Id.Equals(ChunkHelper.hIST, StringComparison.InvariantCultureIgnoreCase) || chunk.Id.Equals(ChunkHelper.tIME, StringComparison.InvariantCultureIgnoreCase)))
                         copy = true;
                     if (chunk is PngChunkSkipped)
                         copy = false;
                 }
-                if (copy) {
-                    chunksList.Queue(PngChunk.CloneChunk(chunk, ImgInfo));
-                }
+                if (copy)
+                  chunksList.Queue(PngChunk.CloneChunk(chunk, ImgInfo));
             }
         }
 
-        public void CopyChunksFirst(PngReader reader, int copy_mask) {
+      public void CopyChunksFirst(PngReader reader, int copy_mask) {
             CopyChunks(reader, copy_mask, false);
         }
 
-        public void CopyChunksLast(PngReader reader, int copy_mask) {
+      public void CopyChunksLast(PngReader reader, int copy_mask) {
             CopyChunks(reader, copy_mask, true);
         }
 
-        /// <summary>
+      /// <summary>
         /// Computes compressed size/raw size, approximate
         /// </summary>
         /// <remarks>Actually: compressed size = total size of IDAT data , raw size = uncompressed pixel bytes = rows * (bytesPerRow + 1)
@@ -464,7 +493,7 @@ namespace Hjg.Pngcs {
         }
 
 
-        /// <summary>
+      /// <summary>
         /// Finalizes the image creation and closes the file stream. </summary>
         ///   <remarks>
         ///   This MUST be called after writing the lines.
@@ -478,16 +507,14 @@ namespace Hjg.Pngcs {
                 datStream.Close();
                 WriteLastChunks();
                 WriteEndChunk();
-                if(this.ShouldCloseStream)
-                {
-                    outputStream.Dispose();
-                }
+                if(ShouldCloseStream)
+                  outputStream.Dispose();
             } catch (IOException e) {
                 throw new PngjOutputException(e);
             }
         }
 
-        /// <summary>
+      /// <summary>
         ///  Filename or description, from the optional constructor argument.
         /// </summary>
         /// <returns></returns>
@@ -496,8 +523,7 @@ namespace Hjg.Pngcs {
         }
 
 
-
-        /// <summary>
+      /// <summary>
         /// this uses the row number from the imageline!
         /// </summary>
         ///
@@ -509,14 +535,15 @@ namespace Hjg.Pngcs {
                 WriteRowByte(imgline.ScanlineB, rownumber);
         }
 
-        public void WriteRow(int[] newrow) {
+      public void WriteRow(int[] newrow) {
             WriteRow(newrow, -1);
         }
 
-        public void WriteRow(int[] newrow, int rown) {
+      public void WriteRow(int[] newrow, int rown) {
             WriteRowInt(newrow, rown);
         }
-        /// <summary>
+
+      /// <summary>
         /// Writes a full image row.
         /// </summary>
         /// <remarks>
@@ -534,14 +561,14 @@ namespace Hjg.Pngcs {
             filterAndSend(rown);
         }
 
-        public void WriteRowByte(byte[] newrow, int rown) {
+      public void WriteRowByte(byte[] newrow, int rown) {
             prepareEncodeRow(rown);
             encodeRowFromByte(newrow);
             filterAndSend(rown);
         }
 
 
-        /**
+      /**
          * Writes all the pixels, calling writeRowInt() for each image row
          */
         public void WriteRowsInt(int[][] image) {
@@ -549,7 +576,7 @@ namespace Hjg.Pngcs {
                 WriteRowInt(image[i], i);
         }
 
-        /**
+      /**
          * Writes all the pixels, calling writeRowByte() for each image row
          */
         public void WriteRowsByte(byte[][] image) {
@@ -557,15 +584,15 @@ namespace Hjg.Pngcs {
                 WriteRowByte(image[i], i);
         }
 
-        public PngMetadata GetMetadata() {
+      public PngMetadata GetMetadata() {
             return metadata;
         }
 
-        public ChunksListForWrite GetChunksList() {
+      public ChunksListForWrite GetChunksList() {
             return chunksList;
         }
 
-        /// <summary>
+      /// <summary>
         /// Sets internal prediction filter type, or strategy to choose it.
         /// </summary>
         /// <remarks>
@@ -578,13 +605,15 @@ namespace Hjg.Pngcs {
             filterStrat = new FilterWriteStrategy(ImgInfo, filterType);
         }
 
-        public bool IsUnpackedMode() {
+      public bool IsUnpackedMode() {
             return unpackedMode;
         }
 
-        public void SetUseUnPackedMode(bool useUnpackedMode) {
-            this.unpackedMode = useUnpackedMode;
+      public void SetUseUnPackedMode(bool useUnpackedMode) {
+            unpackedMode = useUnpackedMode;
             needsPack = unpackedMode && ImgInfo.Packed;
         }
+
+      #endregion
     }
 }
